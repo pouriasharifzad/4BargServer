@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>مدیریت آواتارها</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            direction: rtl;
+            text-align: right;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+        }
+        .avatar-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        .avatar-card {
+            border: 1px solid #ccc;
+            padding: 10px;
+            border-radius: 5px;
+            width: 200px;
+            text-align: center;
+        }
+        .avatar-card img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 5px;
+        }
+        .avatar-card button {
+            margin: 5px;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        .approve-btn {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+        }
+        .reject-btn {
+            background-color: #f44336;
+            color: white;
+            border: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>مدیریت آواتارهای در انتظار تأیید</h1>
+    <div class="avatar-container">
+        <% if (pendingAvatars.length === 0) { %>
+            <p>هیچ آواتاری در انتظار تأیید نیست.</p>
+        <% } else { %>
+            <% pendingAvatars.forEach(avatar => { %>
+                <div class="avatar-card">
+                    <p>کاربر: <%= avatar.userId.username %></p>
+                    <img src="data:image/png;base64,<%= avatar.avatar %>" alt="آواتار">
+                    <form action="/admin/avatars/approve/<%= avatar._id %>" method="POST">
+                        <button type="submit" class="approve-btn">تأیید</button>
+                    </form>
+                    <form action="/admin/avatars/reject/<%= avatar._id %>" method="POST">
+                        <button type="submit" class="reject-btn">رد</button>
+                    </form>
+                </div>
+            <% }) %>
+        <% } %>
+    </div>
+</body>
+</html>

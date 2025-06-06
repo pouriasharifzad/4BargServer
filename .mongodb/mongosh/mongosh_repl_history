@@ -1,0 +1,11 @@
+db.games.find({}, { gameId: 1, _id: 0 }).pretty();
+db.games.find().pretty();
+use 4bargdb
+db.chats.find({ participants: { $all: ["680a590bb89611a2bf2996cb", "680a5951b89611a2bf2996da"] } }).populate('messages')
+db.messages.find()
+db.chats.find()
+use 4bargdb
+db.messages.find()
+db.chats.find({ participants: { $all: ["680a590bb89611a2bf2996cb", "680a5951b89611a2bf2996da"] } }).populate('messages')
+db.chats.find()
+use 4bargdb
