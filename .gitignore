@@ -1,0 +1,8 @@
+node_modules/
+.cache/
+.local/
+.npm/
+.mongodb/
+.ssh/
+.snap/
+data/

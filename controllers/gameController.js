@@ -2,7 +2,6 @@ const Game = require('../models/Game');
 const Room = require('../models/Room');
 const User = require('../models/User');
 const { updateUserStatus } = require('../utils/userStatus');
-const { v4: uuidv4 } = require('uuid'); // برای تولید شناسه یکتا
 
 // Map to store active turn timers for each game
 const turnTimers = new Map(); // Key: gameId, Value: { timerId, timeout }
@@ -167,22 +166,14 @@ const initializeGame = async (game, io) => {
 
     console.log(`[Game ${game.gameId}] Starting initializeGame for roomNumber: ${game.roomNumber}`);
 
-    // ایجاد دست کارت‌ها با شناسه یکتا
     for (let suit of suits) {
         for (let value of values) {
-            deck.push({ suit, value, cardId: uuidv4() });
+            deck.push({ suit, value });
         }
     }
 
-    // بررسی یکتایی کارت‌ها
-    const uniqueCardCount = new Set(deck.map(card => `${card.suit}-${card.value}`)).size;
-    if (uniqueCardCount !== 52) {
-        console.error(`[Game ${game.gameId}] Deck creation failed: Expected 52 unique cards, but got ${uniqueCardCount}`);
-        throw new Error('Failed to create a unique deck');
-    }
-
     deck = shuffle(deck);
-    console.log(`[Game ${game.gameId}] Deck created and shuffled, size: ${deck.length}, unique cards: ${uniqueCardCount}`);
+    console.log(`[Game ${game.gameId}] Deck created and shuffled, size: ${deck.length}`);
 
     if (game.players.length !== 2) {
         console.error(`[Game ${game.gameId}] Invalid number of players: ${game.players.length}. Expected 2.`);
@@ -202,10 +193,6 @@ const initializeGame = async (game, io) => {
         let card = deck.pop();
         if (card.value !== 'Jack') {
             tableCards.push(card);
-        } else {
-            // اگر کارت Jack بود، آن را به دست برگردانیم و دوباره انتخاب کنیم
-            deck.push(card);
-            deck = shuffle(deck); // دوباره دست را هم بزنیم تا از تکرار جلوگیری شود
         }
     }
     game.deck = deck;
@@ -214,18 +201,6 @@ const initializeGame = async (game, io) => {
     game.gameOver = false;
     console.log(`[Game ${game.gameId}] Table cards assigned: ${JSON.stringify(tableCards)}`);
     console.log(`[Game ${game.gameId}] Remaining deck size: ${deck.length}`);
-
-    // بررسی یکتایی کارت‌های توزیع‌شده
-    const allAssignedCards = [
-        ...game.players[0].cards,
-        ...game.players[1].cards,
-        ...tableCards
-    ];
-    const uniqueAssignedCards = new Set(allAssignedCards.map(card => card.cardId));
-    if (uniqueAssignedCards.size !== allAssignedCards.length) {
-        console.error(`[Game ${game.gameId}] Duplicate cards detected in distribution: Expected ${allAssignedCards.length} unique cards, but got ${uniqueAssignedCards.size}`);
-        throw new Error('Duplicate cards detected in distribution');
-    }
 
     await game.save();
     console.log(`[Game ${game.gameId}] Game saved to database`);
@@ -245,8 +220,8 @@ const initializeGame = async (game, io) => {
         const payload = {
             gameId: game.gameId,
             userId: player.userId,
-            cards: player.cards.map(card => ({ suit: card.suit, value: card.value, cardId: card.cardId })),
-            tableCards: game.tableCards.map(card => ({ suit: card.suit, value: card.value, cardId: card.cardId }))
+            cards: player.cards.map(card => ({ suit: card.suit, value: card.value })),
+            tableCards: game.tableCards
         };
         const targetSocket = Array.from(io.sockets.sockets.values()).find(s => s.userId === player.userId.toString());
         if (targetSocket) {
@@ -261,7 +236,7 @@ const initializeGame = async (game, io) => {
         gameId: game.gameId,
         roomNumber: game.roomNumber,
         players: game.players.map(p => ({ userId: p.userId, cardCount: p.cards.length })),
-        tableCards: game.tableCards.map(card => ({ suit: card.suit, value: card.value, cardId: card.cardId })),
+        tableCards: game.tableCards,
         currentTurn: game.players[game.currentPlayerIndex].userId
     };
     io.to(game.gameId).emit('game_state_update', statePayload);
@@ -360,8 +335,8 @@ const getPlayerCards = async (socket, request) => {
         const payload = {
             gameId: game.gameId,
             userId,
-            cards: player.cards.map(card => ({ suit: card.suit, value: card.value, cardId: card.cardId })),
-            tableCards: game.tableCards.map(card => ({ suit: card.suit, value: card.value, cardId: card.cardId })) || []
+            cards: player.cards.map(card => ({ suit: card.suit, value: card.value })),
+            tableCards: game.tableCards || []
         };
         socket.emit('player_cards', payload);
         socket.emit('get_player_cards_response', { requestId, success: true, message: 'کارت‌ها با موفقیت ارسال شد' });
@@ -430,7 +405,7 @@ const playCard = async (socket, request, io) => {
             return;
         }
 
-        const playerCardIndex = currentPlayer.cards.findIndex(c => c.cardId === card.cardId);
+        const playerCardIndex = currentPlayer.cards.findIndex(c => c.suit === card.suit && c.value === card.value);
         if (playerCardIndex === -1) {
             if (!isAutomatic) {
                 socket.emit('play_card_response', { requestId, success: false, message: 'کارت در دست شما نیست' });
@@ -462,13 +437,13 @@ const playCard = async (socket, request, io) => {
                     const randomComboIndex = Math.floor(Math.random() * combinations.length);
                     collectedCards = combinations[randomComboIndex];
                     console.log(`[Game ${gameId}] [${socket.id}] Automatic play: Randomly selected combination to collect: ${JSON.stringify(collectedCards)}`);
-                    game.tableCards = game.tableCards.filter(tc => !collectedCards.some(c => c.cardId === tc.cardId));
+                    game.tableCards = game.tableCards.filter(tc => !collectedCards.some(c => c.suit === tc.suit && c.value === tc.value));
                 } else {
                     const payload = {
                         gameId: game.gameId,
                         userId: userId,
-                        card: { suit: card.suit, value: card.value, cardId: card.cardId },
-                        combinations: combinations.map(combo => combo.map(c => ({ suit: c.suit, value: c.value, cardId: c.cardId })))
+                        card: card,
+                        combinations: combinations.map(combo => combo.map(c => ({ suit: c.suit, value: c.value })))
                     };
                     socket.emit('select_combination', payload);
                     console.log(`[Game ${gameId}] [${socket.id}] Sent select_combination with ${combinations.length} options`);
@@ -477,21 +452,17 @@ const playCard = async (socket, request, io) => {
             } else if (combinations.length === 1) {
                 collectedCards = combinations[0];
                 console.log(`[Game ${gameId}] [${socket.id}] Single combination found, collected: ${JSON.stringify(collectedCards)}`);
-                game.tableCards = game.tableCards.filter(tc => !collectedCards.some(c => c.cardId === tc.cardId));
+                game.tableCards = game.tableCards.filter(tc => !collectedCards.some(c => c.suit === tc.suit && c.value === tc.value));
             } else if (selectedTableCards && selectedTableCards.length > 0) {
-                const selectedCards = selectedTableCards.map(c => ({
-                    suit: c.suit,
-                    value: c.value,
-                    cardId: c.cardId
-                }));
+                const selectedCards = selectedTableCards.map(c => ({ suit: c.suit, value: c.value }));
                 const validCombination = combinations.some(combo =>
                     combo.length === selectedCards.length &&
-                    combo.every(c => selectedCards.some(sc => sc.cardId === c.cardId))
+                    combo.every(c => selectedCards.some(sc => sc.suit === c.suit && sc.value === c.value))
                 );
                 if (validCombination) {
                     collectedCards = selectedCards;
                     console.log(`[Game ${gameId}] [${socket.id}] Valid combination selected, collected: ${JSON.stringify(collectedCards)}`);
-                    game.tableCards = game.tableCards.filter(tc => !collectedCards.some(c => c.cardId === tc.cardId));
+                    game.tableCards = game.tableCards.filter(tc => !collectedCards.some(c => c.suit === tc.suit && c.value === tc.value));
                 } else {
                     if (!isAutomatic) {
                         socket.emit('play_card_response', { requestId, success: false, message: 'ترکیب انتخاب‌شده معتبر نیست' });
@@ -510,14 +481,14 @@ const playCard = async (socket, request, io) => {
                 if (isAutomatic) {
                     const randomCardIndex = Math.floor(Math.random() * matchingCards.length);
                     collectedCards.push(matchingCards[randomCardIndex]);
-                    game.tableCards = game.tableCards.filter(tc => tc.cardId !== matchingCards[randomCardIndex].cardId);
+                    game.tableCards = game.tableCards.filter(tc => tc !== matchingCards[randomCardIndex]);
                     console.log(`[Game ${gameId}] [${socket.id}] Automatic play: Randomly selected card to collect: ${JSON.stringify(collectedCards)}`);
                 } else {
                     const payload = {
                         gameId: game.gameId,
                         userId: userId,
-                        card: { suit: card.suit, value: card.value, cardId: card.cardId },
-                        options: matchingCards.map(c => ({ suit: c.suit, value: c.value, cardId: c.cardId }))
+                        card: card,
+                        options: matchingCards.map(c => ({ suit: c.suit, value: c.value }))
                     };
                     socket.emit('select_king_or_queen', payload);
                     console.log(`[Game ${gameId}] [${socket.id}] Sent select_king_or_queen with ${matchingCards.length} options`);
@@ -525,14 +496,14 @@ const playCard = async (socket, request, io) => {
                 }
             } else if (matchingCards.length === 1) {
                 collectedCards.push(matchingCards[0]);
-                game.tableCards = game.tableCards.filter(tc => tc.cardId !== matchingCards[0].cardId);
+                game.tableCards = game.tableCards.filter(tc => tc !== matchingCards[0]);
                 console.log(`[Game ${gameId}] [${socket.id}] Single matching card collected: ${JSON.stringify(collectedCards)}`);
             } else if (selectedTableCards && selectedTableCards.length === 1) {
                 const selectedCard = selectedTableCards[0];
-                const validCard = matchingCards.find(c => c.cardId === selectedCard.cardId);
+                const validCard = matchingCards.find(c => c.suit === selectedCard.suit && c.value === selectedCard.value);
                 if (validCard) {
                     collectedCards.push(validCard);
-                    game.tableCards = game.tableCards.filter(tc => tc.cardId !== validCard.cardId);
+                    game.tableCards = game.tableCards.filter(tc => tc !== validCard);
                     console.log(`[Game ${gameId}] [${socket.id}] Valid card selected, collected: ${JSON.stringify(collectedCards)}`);
                 } else {
                     if (!isAutomatic) {
@@ -569,9 +540,9 @@ const playCard = async (socket, request, io) => {
         const playedCardPayload = {
             gameId: game.gameId,
             userId: userId,
-            card: { suit: card.suit, value: card.value, cardId: card.cardId },
+            card: { suit: card.suit, value: card.value },
             isCollected: collectedCards.length > 0,
-            tableCards: collectedCards.map(c => ({ suit: c.suit, value: c.value, cardId: c.cardId })),
+            tableCards: collectedCards.map(c => ({ suit: c.suit, value: c.value })),
             surEvent: surEvent
         };
         io.to(game.gameId).emit('played_card', playedCardPayload);
@@ -652,7 +623,7 @@ const continueGameAfterAnimation = async (socket, request, io) => {
                 roomNumber: game.roomNumber,
                 players: game.players.map(p => ({ userId: p.userId, cardCount: p.cards.length })),
                 tableCards: [],
-                collectedCards: game.players.map(p => ({ userId: p.userId, cards: p.collectedCards.map(card => ({ suit: card.suit, value: card.value, cardId: card.cardId })) })),
+                collectedCards: game.players.map(p => ({ userId: p.userId, cards: p.collectedCards })),
                 surs: game.players.map(p => ({ userId: p.userId, count: p.surs || 0 })),
                 scores,
                 winner,
@@ -699,10 +670,10 @@ const continueGameAfterAnimation = async (socket, request, io) => {
             const payload = {
                 gameId: updatedGame.gameId,
                 userId: player.userId,
-                cards: player.cards.map(card => ({ suit: card.suit, value: card.value, cardId: card.cardId })),
-                tableCards: updatedGame.tableCards.map(card => ({ suit: card.suit, value: card.value, cardId: card.cardId }))
+                cards: player.cards,
+                tableCards: updatedGame.tableCards
             };
-            const targetSocket = unhappiness(io.sockets.sockets.values()).find(s => s.userId === player.userId.toString());
+            const targetSocket = Array.from(io.sockets.sockets.values()).find(s => s.userId === player.userId.toString());
             if (targetSocket) {
                 targetSocket.emit('player_cards', payload);
                 console.log(`[Game ${gameId}] [${socket.id}] Sent player_cards to ${player.userId}`);
@@ -715,16 +686,16 @@ const continueGameAfterAnimation = async (socket, request, io) => {
             gameId: updatedGame.gameId,
             roomNumber: updatedGame.roomNumber,
             players: updatedGame.players.map(p => ({ userId: p.userId, cardCount: p.cards.length })),
-            tableCards: updatedGame.tableCards.map(card => ({ suit: card.suit, value: card.value, cardId: card.cardId })),
+            tableCards: updatedGame.tableCards,
             currentTurn: updatedGame.players[updatedGame.currentPlayerIndex].userId,
-            collectedCards: updatedGame.players.map(p => ({ userId: p.userId, cards: p.collectedCards.map(card => ({ suit: card.suit, value: card.value, cardId: card.cardId })) })),
+            collectedCards: updatedGame.players.map(p => ({ userId: p.userId, cards: p.collectedCards })),
             surs: updatedGame.players.map(p => ({ userId: p.userId, count: p.surs || 0 }))
         };
         io.to(game.gameId).emit('game_state_update', statePayload);
         console.log(`[Game ${gameId}] [${socket.id}] Sent game_state_update: ${JSON.stringify(statePayload)}`);
 
         if (!isAutomatic) {
-            socket.emit('continue_game_response', { requestId, success: true, message: 'بازی ادامه یافت', tableCards: updatedGame.tableCards.map(card => ({ suit: card.suit, value: card.value, cardId: card.cardId })) });
+            socket.emit('continue_game_response', { requestId, success: true, message: 'بازی ادامه یافت', tableCards: updatedGame.tableCards });
             console.log(`[Game ${gameId}] [${socket.id}] Sent continue_game_response: success=true`);
         }
 
